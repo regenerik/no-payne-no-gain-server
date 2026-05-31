@@ -104,6 +104,7 @@ function createRoom({ name, maxPlayers, host }) {
     },
     ballSeq: 0,
     kickSeq: 0,
+    playerSeqs: new Map(),
     lastKickId: null,
     players: new Map(),
   };
@@ -307,7 +308,7 @@ io.on("connection", (socket) => {
   socket.on("ball:state", (state = {}) => {
     const room = getSocketRoom(socket);
     if (!room || socket.id !== room.hostId) return;
-    socket.to(room.id).emit("ball:state", {
+    socket.volatile.to(room.id).emit("ball:state", {
       seq: ++room.ballSeq,
       x: Number(state.x) || 0,
       y: Number(state.y) || 0,
@@ -360,6 +361,7 @@ io.on("connection", (socket) => {
     const player = room?.players.get(socket.id);
     if (!room || !player) return;
     player.state = {
+      seq: (room.playerSeqs.get(socket.id) || 0) + 1,
       x: Number(state.x) || 0,
       y: Number(state.y) || 0,
       z: Number(state.z) || 0,
@@ -367,7 +369,8 @@ io.on("connection", (socket) => {
       moving: Boolean(state.moving),
       t: Date.now(),
     };
-    socket.to(room.id).emit("player:state", {
+    room.playerSeqs.set(socket.id, player.state.seq);
+    socket.volatile.to(room.id).emit("player:state", {
       playerId: socket.id,
       state: player.state,
     });
