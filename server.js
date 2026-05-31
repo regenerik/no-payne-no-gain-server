@@ -262,6 +262,51 @@ io.on("connection", (socket) => {
     emitRoom(room);
   });
 
+  socket.on("ball:state", (state = {}) => {
+    const room = getSocketRoom(socket);
+    if (!room || socket.id !== room.hostId) return;
+    socket.to(room.id).emit("ball:state", {
+      x: Number(state.x) || 0,
+      y: Number(state.y) || 0,
+      z: Number(state.z) || 0,
+      vx: Number(state.vx) || 0,
+      vz: Number(state.vz) || 0,
+      vy: Number(state.vy) || 0,
+      charge: Number(state.charge) || 0,
+      ownerId: state.ownerId || null,
+      t: Date.now(),
+    });
+  });
+
+  socket.on("ball:kick", (kick = {}) => {
+    const room = getSocketRoom(socket);
+    if (!room) return;
+    io.to(room.hostId).emit("ball:kick", {
+      playerId: socket.id,
+      power: Number(kick.power) || 0,
+      chargeRatio: Number(kick.chargeRatio) || 0,
+      liftPower: Number(kick.liftPower) || 0,
+      soundKind: kick.soundKind || "shot",
+      dir: {
+        x: Number(kick.dir?.x) || 0,
+        z: Number(kick.dir?.z) || 0,
+      },
+    });
+  });
+
+  socket.on("match:goal", ({ scoringTeam } = {}) => {
+    const room = getSocketRoom(socket);
+    if (!room || socket.id !== room.hostId) return;
+    if (scoringTeam !== "red" && scoringTeam !== "blue") return;
+    room.scores[scoringTeam] += 1;
+    room.updatedAt = Date.now();
+    io.to(room.id).emit("match:score", {
+      scores: room.scores,
+      scoringTeam,
+    });
+    emitRooms();
+  });
+
   socket.on("player:state", (state = {}) => {
     const room = getSocketRoom(socket);
     const player = room?.players.get(socket.id);
