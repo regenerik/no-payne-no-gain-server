@@ -129,7 +129,8 @@ function leaveCurrentRoom(socket) {
   }
 
   if (room.hostId === socket.id) {
-    room.hostId = [...room.players.keys()][0];
+    closeRoom(room, "host-disconnected");
+    return;
   }
   room.updatedAt = Date.now();
   emitRoom(room);
