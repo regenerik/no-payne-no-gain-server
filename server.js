@@ -254,6 +254,9 @@ io.on("connection", (socket) => {
     if (!room || socket.id !== room.hostId) return;
     room.started = true;
     room.scores = { red: 0, blue: 0 };
+    for (const player of room.players.values()) {
+      player.state = null;
+    }
     room.updatedAt = Date.now();
     io.to(room.id).emit("room:started", publicRoom(room));
     emitRoom(room);
