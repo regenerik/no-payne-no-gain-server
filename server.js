@@ -96,7 +96,7 @@ function createRoom({ name, maxPlayers, host }) {
     settings: {
       timeLimit: 3,
       scoreLimit: 3,
-      proMode: true,
+      proMode: false,
     },
     scores: {
       red: 0,
@@ -279,11 +279,18 @@ io.on("connection", (socket) => {
     emitRoom(room);
   });
 
-  socket.on("room:start", () => {
+  socket.on("room:start", (settings = {}) => {
     const room = getSocketRoom(socket);
     if (!room || socket.id !== room.hostId) return;
+    if (settings && typeof settings === "object") {
+      room.settings = {
+        timeLimit: Math.max(1, Math.min(Number(settings.timeLimit) || room.settings.timeLimit, 15)),
+        scoreLimit: Math.max(1, Math.min(Number(settings.scoreLimit) || room.settings.scoreLimit, 20)),
+        proMode: settings.proMode === undefined ? room.settings.proMode : Boolean(settings.proMode),
+      };
+    }
     room.started = true;
-    room.matchEndsAt = Date.now() + Math.max(1, Number(room.settings.timeLimit) || 3) * 60 * 1000;
+    room.matchEndsAt = Date.now() + Math.max(1, Number(room.settings.timeLimit) || 1) * 60 * 1000;
     room.scores = { red: 0, blue: 0 };
     for (const player of room.players.values()) {
       player.state = null;
