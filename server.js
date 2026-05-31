@@ -35,6 +35,7 @@ function publicRoom(room) {
     hostId: room.hostId,
     locked: room.locked,
     started: room.started,
+    matchEndsAt: room.matchEndsAt || null,
     ping: room.ping,
     settings: room.settings,
     scores: room.scores,
@@ -50,6 +51,7 @@ function roomList() {
       name: room.name,
       ping: room.ping,
       maxPlayers: room.maxPlayers,
+      started: room.started,
       players: [...room.players.values()].map(publicPlayer),
     }));
 }
@@ -87,6 +89,7 @@ function createRoom({ name, maxPlayers, host }) {
     hostId: host.id,
     locked: false,
     started: false,
+    matchEndsAt: null,
     ping: 20 + Math.floor(Math.random() * 48),
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -129,6 +132,28 @@ function leaveCurrentRoom(socket) {
     room.hostId = [...room.players.keys()][0];
   }
   room.updatedAt = Date.now();
+  emitRoom(room);
+}
+
+function closeRoom(room, reason = "host-left") {
+  io.to(room.id).emit("room:closed", { reason });
+  for (const playerId of room.players.keys()) {
+    const playerSocket = io.sockets.sockets.get(playerId);
+    if (playerSocket) {
+      playerSocket.leave(room.id);
+      playerSocket.data.roomId = null;
+    }
+  }
+  rooms.delete(room.id);
+  emitRooms();
+}
+
+function endMatch(room) {
+  if (!room.started) return;
+  room.started = false;
+  room.matchEndsAt = null;
+  room.updatedAt = Date.now();
+  io.to(room.id).emit("room:ended", publicRoom(room));
   emitRoom(room);
 }
 
@@ -193,6 +218,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("room:leave", () => {
+    const room = getSocketRoom(socket);
+    if (room && socket.id === room.hostId) {
+      closeRoom(room);
+      return;
+    }
     leaveCurrentRoom(socket);
   });
 
@@ -253,6 +283,7 @@ io.on("connection", (socket) => {
     const room = getSocketRoom(socket);
     if (!room || socket.id !== room.hostId) return;
     room.started = true;
+    room.matchEndsAt = Date.now() + Math.max(1, Number(room.settings.timeLimit) || 3) * 60 * 1000;
     room.scores = { red: 0, blue: 0 };
     for (const player of room.players.values()) {
       player.state = null;
@@ -341,6 +372,15 @@ setInterval(() => {
   }
   if (changed) emitRooms();
 }, 1000 * 60 * 10);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (room.started && room.matchEndsAt && now >= room.matchEndsAt) {
+      endMatch(room);
+    }
+  }
+}, 1000);
 
 server.listen(PORT, () => {
   console.log(`No Payne No Gain Socket Server listening on ${PORT}`);
