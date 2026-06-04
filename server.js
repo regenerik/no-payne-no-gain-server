@@ -319,6 +319,9 @@ io.on("connection", (socket) => {
       charge: Number(state.charge) || 0,
       ownerId: state.ownerId || null,
       lastKickId: state.lastKickId || room.lastKickId || null,
+      kickoffLocked: Boolean(state.kickoffLocked),
+      kickoffTeam: state.kickoffTeam === "red" || state.kickoffTeam === "blue" ? state.kickoffTeam : null,
+      kickoffTakerId: typeof state.kickoffTakerId === "string" ? state.kickoffTakerId : null,
       serverTime: Date.now(),
     });
   });
