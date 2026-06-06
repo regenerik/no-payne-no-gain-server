@@ -334,6 +334,7 @@ io.on("connection", (socket) => {
   socket.on("ball:kick", (kick = {}) => {
     const room = getSocketRoom(socket);
     if (!room || !room.started || !room.match) return;
+    if (kick.matchId !== room.match.id) return;
     const kickId = String(kick.kickId || `${socket.id}-${++room.kickSeq}`);
     const result = kickBall(room, socket.id, { ...kick, kickId });
     if (!result.ok) {
@@ -360,6 +361,7 @@ io.on("connection", (socket) => {
     const room = getSocketRoom(socket);
     const player = room?.players.get(socket.id);
     if (!room || !player || !room.started || !room.match) return;
+    if (input.matchId !== room.match.id) return;
     setPlayerInput(room, socket.id, input);
   });
 
