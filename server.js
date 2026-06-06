@@ -1,6 +1,17 @@
 import express from "express";
 import http from "node:http";
 import { Server } from "socket.io";
+import {
+  SIMULATION_HZ,
+  SNAPSHOT_HZ,
+  createMatch,
+  createSnapshot,
+  kickBall,
+  setPlayerInput,
+  stepMatch,
+  syncMatchPlayers,
+  updateMatchSettings,
+} from "./simulation.js";
 
 const PORT = process.env.PORT || 3001;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "*";
@@ -39,6 +50,7 @@ function publicRoom(room) {
     ping: room.ping,
     settings: room.settings,
     scores: room.scores,
+    matchState: room.match ? createSnapshot(room) : null,
     players: [...room.players.values()].map(publicPlayer),
   };
 }
@@ -107,6 +119,7 @@ function createRoom({ name, maxPlayers, host }) {
     kickSeq: 0,
     playerSeqs: new Map(),
     lastKickId: null,
+    match: null,
     players: new Map(),
   };
   room.players.set(host.id, host);
@@ -124,6 +137,7 @@ function leaveCurrentRoom(socket) {
   const room = getSocketRoom(socket);
   if (!room) return;
   room.players.delete(socket.id);
+  if (room.match) syncMatchPlayers(room);
   socket.leave(room.id);
   socket.data.roomId = null;
 
@@ -158,6 +172,7 @@ function endMatch(room) {
   if (!room.started) return;
   room.started = false;
   room.matchEndsAt = null;
+  room.match = null;
   room.updatedAt = Date.now();
   io.to(room.id).emit("room:ended", publicRoom(room));
   emitRoom(room);
@@ -216,6 +231,7 @@ io.on("connection", (socket) => {
       score: 0,
       state: null,
     });
+    if (room.match) syncMatchPlayers(room);
     room.updatedAt = Date.now();
     socket.data.roomId = room.id;
     socket.join(room.id);
@@ -240,6 +256,7 @@ io.on("connection", (socket) => {
     if (!player) return;
     player.team = team;
     player.state = null;
+    if (room.match) syncMatchPlayers(room, false);
     room.updatedAt = Date.now();
     emitRoom(room);
   });
@@ -251,6 +268,7 @@ io.on("connection", (socket) => {
       player.team = index % 2 === 0 ? "red" : "blue";
       player.state = null;
     });
+    if (room.match) syncMatchPlayers(room, false);
     room.updatedAt = Date.now();
     emitRoom(room);
   });
@@ -262,6 +280,7 @@ io.on("connection", (socket) => {
       player.team = "spectators";
       player.state = null;
     });
+    if (room.match) syncMatchPlayers(room, false);
     room.updatedAt = Date.now();
     emitRoom(room);
   });
@@ -275,6 +294,7 @@ io.on("connection", (socket) => {
       proMode: Boolean(settings.proMode),
       keeperEnabled: Boolean(settings.keeperEnabled),
     };
+    updateMatchSettings(room);
     room.updatedAt = Date.now();
     emitRoom(room);
   });
@@ -303,40 +323,25 @@ io.on("connection", (socket) => {
     for (const player of room.players.values()) {
       player.state = null;
     }
+    room.match = createMatch(room);
     room.updatedAt = Date.now();
     io.to(room.id).emit("room:started", publicRoom(room));
     emitRoom(room);
   });
 
-  socket.on("ball:state", (state = {}) => {
-    const room = getSocketRoom(socket);
-    if (!room || socket.id !== room.hostId) return;
-    socket.volatile.to(room.id).emit("ball:state", {
-      seq: ++room.ballSeq,
-      x: Number(state.x) || 0,
-      y: Number(state.y) || 0,
-      z: Number(state.z) || 0,
-      vx: Number(state.vx) || 0,
-      vz: Number(state.vz) || 0,
-      vy: Number(state.vy) || 0,
-      charge: Number(state.charge) || 0,
-      ownerId: state.ownerId || null,
-      lastKickId: state.lastKickId || room.lastKickId || null,
-      kickoffLocked: Boolean(state.kickoffLocked),
-      kickoffTeam: state.kickoffTeam === "red" || state.kickoffTeam === "blue" ? state.kickoffTeam : null,
-      kickoffTakerId: typeof state.kickoffTakerId === "string" ? state.kickoffTakerId : null,
-      serverTime: Date.now(),
-    });
-  });
-
   socket.on("ball:kick", (kick = {}) => {
     const room = getSocketRoom(socket);
-    if (!room) return;
+    if (!room || !room.started || !room.match) return;
     const kickId = String(kick.kickId || `${socket.id}-${++room.kickSeq}`);
-    room.lastKickId = kickId;
-    io.to(room.hostId).emit("ball:kick", {
+    const result = kickBall(room, socket.id, { ...kick, kickId });
+    if (!result.ok) {
+      socket.emit("ball:kick-rejected", { kickId });
+      return;
+    }
+    room.lastKickId = result.kickId;
+    io.to(room.id).emit("ball:kicked", {
       playerId: socket.id,
-      kickId,
+      kickId: result.kickId,
       power: Number(kick.power) || 0,
       chargeRatio: Number(kick.chargeRatio) || 0,
       liftPower: Number(kick.liftPower) || 0,
@@ -349,37 +354,11 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("match:goal", ({ scoringTeam } = {}) => {
-    const room = getSocketRoom(socket);
-    if (!room || socket.id !== room.hostId) return;
-    if (scoringTeam !== "red" && scoringTeam !== "blue") return;
-    room.scores[scoringTeam] += 1;
-    room.updatedAt = Date.now();
-    io.to(room.id).emit("match:score", {
-      scores: room.scores,
-      scoringTeam,
-    });
-    emitRooms();
-  });
-
-  socket.on("player:state", (state = {}) => {
+  socket.on("player:input", (input = {}) => {
     const room = getSocketRoom(socket);
     const player = room?.players.get(socket.id);
-    if (!room || !player) return;
-    player.state = {
-      seq: (room.playerSeqs.get(socket.id) || 0) + 1,
-      x: Number(state.x) || 0,
-      y: Number(state.y) || 0,
-      z: Number(state.z) || 0,
-      angle: Number(state.angle) || 0,
-      moving: Boolean(state.moving),
-      t: Date.now(),
-    };
-    room.playerSeqs.set(socket.id, player.state.seq);
-    socket.volatile.to(room.id).emit("player:state", {
-      playerId: socket.id,
-      state: player.state,
-    });
+    if (!room || !player || !room.started || !room.match) return;
+    setPlayerInput(room, socket.id, input);
   });
 
   socket.on("disconnect", () => {
@@ -407,6 +386,38 @@ setInterval(() => {
     }
   }
 }, 1000);
+
+let previousSimulationAt = Date.now();
+setInterval(() => {
+  const now = Date.now();
+  const elapsed = Math.min((now - previousSimulationAt) / 1000, 0.05);
+  previousSimulationAt = now;
+  for (const room of rooms.values()) {
+    if (!room.started || !room.match) continue;
+    const events = stepMatch(room, elapsed, now);
+    for (const event of events) {
+      if (event.type !== "goal") continue;
+      room.updatedAt = now;
+      io.to(room.id).emit("match:score", {
+        scores: event.scores,
+        scoringTeam: event.scoringTeam,
+      });
+      if (room.scores[event.scoringTeam] >= room.settings.scoreLimit) {
+        setTimeout(() => {
+          if (room.started) endMatch(room);
+        }, 2100);
+      }
+    }
+  }
+}, 1000 / SIMULATION_HZ);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (!room.started || !room.match) continue;
+    io.to(room.id).volatile.emit("match:snapshot", createSnapshot(room, now));
+  }
+}, 1000 / SNAPSHOT_HZ);
 
 server.listen(PORT, () => {
   console.log(`No Payne No Gain Socket Server listening on ${PORT}`);
