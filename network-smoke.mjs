@@ -83,6 +83,7 @@ try {
   assert.equal(viewerJoined.room.started, true);
   const viewerInitial = viewerJoined.room.matchState.players.find((player) => player.id === viewer.id);
   assert.equal(viewerInitial.team, "spectators");
+  assert.equal(viewerInitial.angle, Math.PI / 4);
   const confettiPromise = once(host, "spectator:confetti");
   viewer.emit("spectator:confetti", { matchId: firstMatchId });
   const confetti = await confettiPromise;

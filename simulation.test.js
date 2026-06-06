@@ -160,6 +160,7 @@ test("spectators walk and jump on the stands without entering the field", () => 
   const room = makeRoom({ proMode: false });
   const spectator = addSpectator(room);
   const initialY = spectator.y;
+  assert.equal(spectator.angle, Math.PI / 4);
   setPlayerInput(room, "viewer", {
     seq: 1,
     angle: Math.PI / 2,
@@ -203,45 +204,24 @@ test("spectators keep their stand position when a goal resets the field", () => 
   assert.equal(after.lastProcessedInput, 9);
 });
 
-test("shot lift peaks near the crossbar at 90 percent and one-and-a-half goals above it at maximum", () => {
+test("the new maximum shot matches the previous 85 percent trajectory", () => {
   const room = makeRoom({ proMode: true });
   const red = room.match.players.get("red");
   red.x = 0;
   red.z = 0;
   room.match.ball.x = 1;
   room.match.ball.z = 0;
-  const ninetyResult = kickBall(room, "red", {
-    power: 47.73,
-    chargeRatio: 0.9,
-    liftPower: 6.7,
+  const result = kickBall(room, "red", {
+    power: 46.62,
+    chargeRatio: 1,
+    liftPower: 6.45,
     dir: { x: 1, z: 0 },
   });
-  assert.equal(ninetyResult.ok, true);
-  let ninetyPeak = room.match.ball.y;
+  assert.equal(result.ok, true);
+  let peak = room.match.ball.y;
   for (let i = 0; i < 120; i += 1) {
     stepMatch(room, 1 / 120);
-    ninetyPeak = Math.max(ninetyPeak, room.match.ball.y);
+    peak = Math.max(peak, room.match.ball.y);
   }
-  assert.ok(ninetyPeak >= 2.65 && ninetyPeak <= 3.15);
-
-  const maximumRoom = makeRoom({ proMode: true });
-  const maximumRed = maximumRoom.match.players.get("red");
-  maximumRed.x = 0;
-  maximumRed.z = 0;
-  maximumRoom.match.ball.x = 1;
-  maximumRoom.match.ball.z = 0;
-  const maximumResult = kickBall(maximumRoom, "red", {
-    power: 49.95,
-    chargeRatio: 1,
-    liftPower: 12,
-    dir: { x: 1, z: 0 },
-  });
-  assert.equal(maximumResult.ok, true);
-  let maximumPeak = maximumRoom.match.ball.y;
-  for (let i = 0; i < 240; i += 1) {
-    stepMatch(maximumRoom, 1 / 120);
-    maximumPeak = Math.max(maximumPeak, maximumRoom.match.ball.y);
-  }
-  const expectedMaximum = 3.08 * 2.5;
-  assert.ok(maximumPeak >= expectedMaximum - 0.35 && maximumPeak <= expectedMaximum + 0.35);
+  assert.ok(peak >= 2.45 && peak <= 2.75);
 });

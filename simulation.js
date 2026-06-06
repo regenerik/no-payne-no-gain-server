@@ -34,6 +34,7 @@ function makePlayer(roomPlayer, index, total) {
   const spectator = roomPlayer.team === "spectators";
   const spectatorSide = index % 2 === 0 ? -1 : 1;
   const spectatorRow = 3 + (index % 6);
+  const spectatorAngle = -spectatorSide * Math.PI / 4;
   const position = spectator
     ? {
         x: spectatorSide * (FIELD.width / 2 + 5.4 + spectatorRow * 0.74),
@@ -47,9 +48,14 @@ function makePlayer(roomPlayer, index, total) {
     x: position.x,
     y: position.y,
     z: position.z,
-    angle: roomPlayer.team === "blue" ? Math.PI : 0,
+    angle: spectator ? spectatorAngle : roomPlayer.team === "blue" ? Math.PI : 0,
     moving: false,
-    input: { seq: 0, angle: roomPlayer.team === "blue" ? Math.PI : 0, vx: 0, vz: 0 },
+    input: {
+      seq: 0,
+      angle: spectator ? spectatorAngle : roomPlayer.team === "blue" ? Math.PI : 0,
+      vx: 0,
+      vz: 0,
+    },
     lastProcessedInput: 0,
     spectator,
     verticalVelocity: 0,
