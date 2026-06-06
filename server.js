@@ -97,6 +97,7 @@ function createRoom({ name, maxPlayers, host }) {
       timeLimit: 3,
       scoreLimit: 3,
       proMode: false,
+      keeperEnabled: false,
     },
     scores: {
       red: 0,
@@ -272,6 +273,7 @@ io.on("connection", (socket) => {
       timeLimit: Math.max(1, Math.min(Number(settings.timeLimit) || room.settings.timeLimit, 15)),
       scoreLimit: Math.max(1, Math.min(Number(settings.scoreLimit) || room.settings.scoreLimit, 20)),
       proMode: Boolean(settings.proMode),
+      keeperEnabled: Boolean(settings.keeperEnabled),
     };
     room.updatedAt = Date.now();
     emitRoom(room);
@@ -292,6 +294,7 @@ io.on("connection", (socket) => {
         timeLimit: Math.max(1, Math.min(Number(settings.timeLimit) || room.settings.timeLimit, 15)),
         scoreLimit: Math.max(1, Math.min(Number(settings.scoreLimit) || room.settings.scoreLimit, 20)),
         proMode: settings.proMode === undefined ? room.settings.proMode : Boolean(settings.proMode),
+        keeperEnabled: settings.keeperEnabled === undefined ? room.settings.keeperEnabled : Boolean(settings.keeperEnabled),
       };
     }
     room.started = true;
