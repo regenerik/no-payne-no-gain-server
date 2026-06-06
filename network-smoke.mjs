@@ -10,6 +10,27 @@ const once = (socket, event, timeout = 3000) => new Promise((resolve, reject) =>
     resolve(payload);
   });
 });
+const waitForConnect = (socket, timeout = 3000) => {
+  if (socket.connected) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Timeout waiting for connect")), timeout);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off("connect", onConnect);
+      socket.off("connect_error", onError);
+    };
+    const onConnect = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    socket.on("connect", onConnect);
+    socket.on("connect_error", onError);
+  });
+};
 const emitAck = (socket, event, payload) => new Promise((resolve) => {
   socket.emit(event, payload, resolve);
 });
@@ -17,9 +38,10 @@ const socketById = (id, host, guest) => id === host.id ? host : guest;
 
 const host = io(url, { transports: ["websocket"] });
 const guest = io(url, { transports: ["websocket"] });
+let viewer;
 
 try {
-  await Promise.all([once(host, "connect"), once(guest, "connect")]);
+  await Promise.all([waitForConnect(host), waitForConnect(guest)]);
   const created = await emitAck(host, "room:create", {
     name: `Authority test ${Date.now()}`,
     maxPlayers: 4,
@@ -50,6 +72,39 @@ try {
     dir: { x: 1, z: 0 },
   });
   await wait(100);
+
+  viewer = io(url, { transports: ["websocket"] });
+  await waitForConnect(viewer);
+  const viewerJoined = await emitAck(viewer, "room:join", {
+    roomId: created.room.id,
+    playerName: "Viewer",
+  });
+  assert.equal(viewerJoined.ok, true);
+  assert.equal(viewerJoined.room.started, true);
+  const viewerInitial = viewerJoined.room.matchState.players.find((player) => player.id === viewer.id);
+  assert.equal(viewerInitial.team, "spectators");
+  const confettiPromise = once(host, "spectator:confetti");
+  viewer.emit("spectator:confetti", { matchId: firstMatchId });
+  const confetti = await confettiPromise;
+  assert.equal(confetti.playerId, viewer.id);
+  viewer.emit("player:input", {
+    matchId: firstMatchId,
+    seq: 1,
+    angle: 0,
+    vx: 0,
+    vz: 8.2,
+    jump: true,
+  });
+  const viewerSnapshot = await new Promise((resolve) => {
+    viewer.on("match:snapshot", (snapshot) => {
+      const state = snapshot.players.find((player) => player.id === viewer.id);
+      if (state?.ack >= 1 && state.y > viewerInitial.y + 0.05) resolve(snapshot);
+    });
+  });
+  const viewerState = viewerSnapshot.players.find((player) => player.id === viewer.id);
+  assert.ok(viewerState.y > viewerInitial.y);
+  viewer.disconnect();
+  viewer = null;
 
   let hostSnapshot;
   let guestSnapshot;
@@ -125,4 +180,5 @@ try {
 } finally {
   host.disconnect();
   guest.disconnect();
+  viewer?.disconnect();
 }

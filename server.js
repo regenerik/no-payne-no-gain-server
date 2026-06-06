@@ -365,6 +365,17 @@ io.on("connection", (socket) => {
     setPlayerInput(room, socket.id, input);
   });
 
+  socket.on("spectator:confetti", ({ matchId } = {}) => {
+    const room = getSocketRoom(socket);
+    const player = room?.players.get(socket.id);
+    if (!room?.started || !room.match || matchId !== room.match.id) return;
+    if (!player || player.team !== "spectators") return;
+    io.to(room.id).emit("spectator:confetti", {
+      playerId: socket.id,
+      matchId: room.match.id,
+    });
+  });
+
   socket.on("disconnect", () => {
     leaveCurrentRoom(socket);
   });

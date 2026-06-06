@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  FIELD,
   createMatch,
   createSnapshot,
   kickBall,
@@ -25,6 +26,13 @@ function makeRoom({ proMode = false, keeperEnabled = false, initialKickoff = fal
   room.match = createMatch(room);
   if (!initialKickoff) room.match.kickoff = { locked: false, team: null, takerId: null };
   return room;
+}
+
+function addSpectator(room, id = "viewer") {
+  room.players.set(id, { id, name: "Viewer", team: "spectators" });
+  room.match = createMatch(room);
+  room.match.kickoff = { locked: false, team: null, takerId: null };
+  return room.match.players.get(id);
 }
 
 test("the server advances players from inputs and acknowledges the sequence", () => {
@@ -146,4 +154,29 @@ test("snapshots identify the match so stale packets can be discarded", () => {
   room.match = createMatch(room);
   const second = createSnapshot(room);
   assert.notEqual(first.matchId, second.matchId);
+});
+
+test("spectators walk and jump on the stands without entering the field", () => {
+  const room = makeRoom({ proMode: false });
+  const spectator = addSpectator(room);
+  const initialY = spectator.y;
+  setPlayerInput(room, "viewer", {
+    seq: 1,
+    angle: Math.PI / 2,
+    vx: 14,
+    vz: 0,
+    jump: true,
+  });
+  for (let i = 0; i < 10; i += 1) stepMatch(room, 1 / 60);
+  assert.ok(spectator.y > initialY);
+  for (let i = 0; i < 180; i += 1) stepMatch(room, 1 / 60);
+  assert.ok(
+    Math.abs(spectator.x) >= FIELD.width / 2 + 5
+      || Math.abs(spectator.z) >= FIELD.length / 2 + 5
+  );
+  assert.equal(kickBall(room, "viewer", { power: 52, dir: { x: 0, z: 1 } }).ok, false);
+  room.match.ball.x = spectator.x;
+  room.match.ball.z = spectator.z;
+  stepMatch(room, 1 / 60);
+  assert.notEqual(room.match.ball.ownerId, "viewer");
 });

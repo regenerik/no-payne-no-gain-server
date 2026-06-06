@@ -31,24 +31,37 @@ export function getTeamStartPosition(team, index, total) {
 }
 
 function makePlayer(roomPlayer, index, total) {
-  const position = getTeamStartPosition(roomPlayer.team, index, total);
+  const spectator = roomPlayer.team === "spectators";
+  const spectatorSide = index % 2 === 0 ? -1 : 1;
+  const spectatorRow = 3 + (index % 6);
+  const position = spectator
+    ? {
+        x: spectatorSide * (FIELD.width / 2 + 5.4 + spectatorRow * 0.74),
+        y: 1.15 + spectatorRow * 0.34,
+        z: clamp(-24 + index * 6, -32, 32),
+      }
+    : getTeamStartPosition(roomPlayer.team, index, total);
   return {
     id: roomPlayer.id,
     team: roomPlayer.team,
     x: position.x,
-    y: 0,
+    y: position.y,
     z: position.z,
     angle: roomPlayer.team === "blue" ? Math.PI : 0,
     moving: false,
     input: { seq: 0, angle: roomPlayer.team === "blue" ? Math.PI : 0, vx: 0, vz: 0 },
     lastProcessedInput: 0,
+    spectator,
+    verticalVelocity: 0,
+    grounded: true,
+    jumpQueued: false,
   };
 }
 
 function rebuildPlayers(match, roomPlayers, preservePositions = false) {
   const previous = match.players;
   const next = new Map();
-  for (const team of ["red", "blue"]) {
+  for (const team of ["red", "blue", "spectators"]) {
     const teamPlayers = [...roomPlayers.values()].filter((player) => player.team === team);
     teamPlayers.forEach((roomPlayer, index) => {
       const existing = previous.get(roomPlayer.id);
@@ -146,6 +159,38 @@ export function setPlayerInput(room, playerId, input = {}) {
     vx,
     vz,
   };
+  if (player.spectator && input.jump === true) player.jumpQueued = true;
+}
+
+function spectatorFloorHeight(x, z) {
+  const sideDistance = Math.abs(x) - (FIELD.width / 2 + 5.4);
+  const endDistance = Math.abs(z) - (FIELD.length / 2 + 5.4);
+  const onSideStand = Math.abs(x) >= FIELD.width / 2 + 5.0
+    && Math.abs(x) <= FIELD.width / 2 + 15
+    && Math.abs(z) <= FIELD.length / 2 + 10;
+  const onEndStand = Math.abs(z) >= FIELD.length / 2 + 5.0
+    && Math.abs(z) <= FIELD.length / 2 + 15
+    && Math.abs(x) <= FIELD.width / 2 + 10;
+  const rowDistance = onSideStand && (!onEndStand || sideDistance >= endDistance)
+    ? sideDistance
+    : endDistance;
+  const row = clamp(Math.round(rowDistance / 0.74), 0, 12);
+  return 1.15 + row * 0.34;
+}
+
+function constrainSpectator(player) {
+  const outerX = FIELD.width / 2 + 14.35;
+  const outerZ = FIELD.length / 2 + 14.35;
+  const innerX = FIELD.width / 2 + 5.0;
+  const innerZ = FIELD.length / 2 + 5.0;
+  player.x = clamp(player.x, -outerX, outerX);
+  player.z = clamp(player.z, -outerZ, outerZ);
+  if (Math.abs(player.x) < innerX && Math.abs(player.z) < innerZ) {
+    const toSide = innerX - Math.abs(player.x);
+    const toEnd = innerZ - Math.abs(player.z);
+    if (toSide < toEnd) player.x = (player.x >= 0 ? 1 : -1) * innerX;
+    else player.z = (player.z >= 0 ? 1 : -1) * innerZ;
+  }
 }
 
 function constrainKickoffPlayer(match, player) {
@@ -162,6 +207,31 @@ function constrainKickoffPlayer(match, player) {
 function updatePlayers(match, dt) {
   for (const player of match.players.values()) {
     player.angle = player.input.angle;
+    if (player.spectator) {
+      player.x += player.input.vx * dt;
+      player.z += player.input.vz * dt;
+      constrainSpectator(player);
+      const floor = spectatorFloorHeight(player.x, player.z);
+      if (player.jumpQueued && player.grounded) {
+        player.verticalVelocity = 6.2;
+        player.grounded = false;
+      }
+      player.jumpQueued = false;
+      if (!player.grounded) {
+        player.verticalVelocity -= 14 * dt;
+        player.y += player.verticalVelocity * dt;
+        if (player.y <= floor) {
+          player.y = floor;
+          player.verticalVelocity = 0;
+          player.grounded = true;
+        }
+      } else {
+        player.y = floor;
+      }
+      player.moving = length2(player.input.vx, player.input.vz) > 0.2;
+      player.lastProcessedInput = player.input.seq;
+      continue;
+    }
     const isTaker = match.kickoff.locked && player.id === match.kickoff.takerId;
     if (!isTaker) {
       player.x += player.input.vx * dt;
@@ -174,7 +244,7 @@ function updatePlayers(match, dt) {
     constrainKickoffPlayer(match, player);
   }
 
-  const players = [...match.players.values()];
+  const players = [...match.players.values()].filter((player) => !player.spectator);
   for (let i = 0; i < players.length; i += 1) {
     for (let j = i + 1; j < players.length; j += 1) {
       const a = players[i];
@@ -202,6 +272,7 @@ function nearestBallOwner(match) {
   let nearest = null;
   let nearestDistance = 2.35;
   for (const player of match.players.values()) {
+    if (player.spectator) continue;
     const distance = length2(match.ball.x - player.x, match.ball.z - player.z);
     if (distance < nearestDistance) {
       nearest = player;
@@ -236,6 +307,7 @@ function updateControlledBall(match, owner, dt) {
 function collideBallWithPlayers(match, proMode) {
   if (match.ball.ownerId) return;
   for (const player of match.players.values()) {
+    if (player.spectator) continue;
     if (match.ball.y > 1.1) continue;
     const dx = match.ball.x - player.x;
     const dz = match.ball.z - player.z;
@@ -422,7 +494,7 @@ function updateBall(room, dt, now) {
 export function kickBall(room, playerId, kick = {}) {
   const match = room.match;
   const player = match?.players.get(playerId);
-  if (!player || match.resetAt) return { ok: false };
+  if (!player || player.spectator || match.resetAt) return { ok: false };
   const distance = length2(match.ball.x - player.x, match.ball.z - player.z);
   if (distance > 3.65) return { ok: false };
   if (match.kickoff.locked && (playerId !== match.kickoff.takerId || player.team !== match.kickoff.team)) {
