@@ -119,6 +119,7 @@ function createRoom({ name, maxPlayers, host }) {
     kickSeq: 0,
     playerSeqs: new Map(),
     lastKickId: null,
+    matchNumber: 0,
     match: null,
     players: new Map(),
   };
@@ -323,6 +324,7 @@ io.on("connection", (socket) => {
     for (const player of room.players.values()) {
       player.state = null;
     }
+    room.matchNumber += 1;
     room.match = createMatch(room);
     room.updatedAt = Date.now();
     io.to(room.id).emit("room:started", publicRoom(room));

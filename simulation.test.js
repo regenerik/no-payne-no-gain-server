@@ -8,8 +8,11 @@ import {
   stepMatch,
 } from "./simulation.js";
 
-function makeRoom({ proMode = false, keeperEnabled = false } = {}) {
+function makeRoom({ proMode = false, keeperEnabled = false, initialKickoff = false } = {}) {
   const room = {
+    id: "test-room",
+    matchNumber: 1,
+    random: () => 0,
     started: true,
     matchEndsAt: Date.now() + 60_000,
     settings: { proMode, keeperEnabled, scoreLimit: 3, timeLimit: 1 },
@@ -20,6 +23,7 @@ function makeRoom({ proMode = false, keeperEnabled = false } = {}) {
     ]),
   };
   room.match = createMatch(room);
+  if (!initialKickoff) room.match.kickoff = { locked: false, team: null, takerId: null };
   return room;
 }
 
@@ -84,6 +88,15 @@ test("kickoff unlocks when the designated player kicks", () => {
   assert.equal(room.match.kickoff.locked, false);
 });
 
+test("a new match starts with one randomly selected team taking kickoff", () => {
+  const room = makeRoom({ proMode: true, initialKickoff: true });
+  assert.equal(room.match.kickoff.locked, true);
+  assert.equal(room.match.kickoff.team, "red");
+  assert.equal(room.match.kickoff.takerId, "red");
+  assert.equal(room.match.players.get("red").x, 0);
+  assert.equal(room.match.players.get("red").z, 0);
+});
+
 test("all players stay in their own half until kickoff", () => {
   const room = makeRoom({ proMode: true });
   room.match.kickoff = { locked: true, team: "red", takerId: "red" };
@@ -124,4 +137,13 @@ test("enabled keepers are included in authoritative snapshots", () => {
   const snapshot = createSnapshot(room);
   assert.equal(snapshot.keepers.length, 2);
   assert.deepEqual(snapshot.keepers.map(({ side }) => side), [-1, 1]);
+});
+
+test("snapshots identify the match so stale packets can be discarded", () => {
+  const room = makeRoom();
+  const first = createSnapshot(room);
+  room.matchNumber += 1;
+  room.match = createMatch(room);
+  const second = createSnapshot(room);
+  assert.notEqual(first.matchId, second.matchId);
 });

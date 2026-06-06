@@ -13,6 +13,7 @@ const once = (socket, event, timeout = 3000) => new Promise((resolve, reject) =>
 const emitAck = (socket, event, payload) => new Promise((resolve) => {
   socket.emit(event, payload, resolve);
 });
+const socketById = (id, host, guest) => id === host.id ? host : guest;
 
 const host = io(url, { transports: ["websocket"] });
 const guest = io(url, { transports: ["websocket"] });
@@ -36,7 +37,18 @@ try {
   await wait(100);
   const startedPromise = Promise.all([once(host, "room:started"), once(guest, "room:started")]);
   host.emit("room:start", { timeLimit: 1, scoreLimit: 3, proMode: false, keeperEnabled: false });
-  await startedPromise;
+  const [firstHostRoom, firstGuestRoom] = await startedPromise;
+  assert.equal(firstHostRoom.matchState.matchId, firstGuestRoom.matchState.matchId);
+  const firstMatchId = firstHostRoom.matchState.matchId;
+  const firstTakerSocket = socketById(firstHostRoom.matchState.kickoffTakerId, host, guest);
+  firstTakerSocket.emit("ball:kick", {
+    kickId: `opening-${Date.now()}`,
+    power: 0,
+    liftPower: 0,
+    chargeRatio: 0,
+    dir: { x: 1, z: 0 },
+  });
+  await wait(100);
 
   let hostSnapshot;
   let guestSnapshot;
@@ -62,26 +74,41 @@ try {
   assert.deepEqual(hostSnapshot.players, guestSnapshot.players);
   assert.deepEqual(hostSnapshot.ball, guestSnapshot.ball);
 
-  const kickId = `network-kick-${Date.now()}`;
-  const kickedPromise = Promise.all([once(host, "ball:kicked"), once(guest, "ball:kicked")]);
-  guest.emit("ball:kick", {
-    kickId,
-    power: 16.66,
-    liftPower: 0.8,
+  const restartedPromise = Promise.all([once(host, "room:started"), once(guest, "room:started")]);
+  host.emit("room:start", { timeLimit: 1, scoreLimit: 3, proMode: false, keeperEnabled: false });
+  const [secondHostRoom, secondGuestRoom] = await restartedPromise;
+  const secondMatchId = secondHostRoom.matchState.matchId;
+  assert.equal(secondMatchId, secondGuestRoom.matchState.matchId);
+  assert.notEqual(secondMatchId, firstMatchId);
+  assert.equal(secondHostRoom.matchState.kickoffLocked, true);
+  assert.ok(secondHostRoom.matchState.kickoffTakerId);
+
+  const secondTakerSocket = socketById(secondHostRoom.matchState.kickoffTakerId, host, guest);
+  secondTakerSocket.emit("ball:kick", {
+    kickId: `restart-opening-${Date.now()}`,
+    power: 0,
+    liftPower: 0,
     chargeRatio: 0,
-    dir: { x: 0, z: -1 },
+    dir: { x: -1, z: 0 },
   });
-  const [hostKick, guestKick] = await kickedPromise;
-  assert.equal(hostKick.kickId, kickId);
-  assert.equal(guestKick.kickId, kickId);
-  const kickedSnapshot = await new Promise((resolve) => {
+  await wait(100);
+  const movingSocket = secondHostRoom.matchState.kickoffTakerId === guest.id ? host : guest;
+  const movingId = movingSocket.id;
+  const beforeRestartMove = secondHostRoom.matchState.players.find((player) => player.id === movingId);
+  for (let seq = 1; seq <= 8; seq += 1) {
+    movingSocket.emit("player:input", { seq, angle: 0, vx: 6, vz: 0 });
+    await wait(35);
+  }
+  const restartedSnapshot = await new Promise((resolve) => {
     guest.on("match:snapshot", (snapshot) => {
-      if (snapshot.ball.lastKickId === kickId) resolve(snapshot);
+      const moved = snapshot.players.find((player) => player.id === movingId);
+      if (snapshot.matchId === secondMatchId && moved?.ack >= 8) resolve(snapshot);
     });
   });
-  assert.ok(kickedSnapshot.ball.vz < -1);
+  const afterRestartMove = restartedSnapshot.players.find((player) => player.id === movingId);
+  assert.ok(afterRestartMove.x > beforeRestartMove.x + 0.5);
 
-  console.log("Network smoke test passed: two clients share state and guest kicks are authoritative.");
+  console.log("Network smoke test passed: consecutive starts use isolated match state and players move.");
 } finally {
   host.disconnect();
   guest.disconnect();

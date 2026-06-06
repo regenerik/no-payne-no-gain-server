@@ -65,6 +65,7 @@ function rebuildPlayers(match, roomPlayers, preservePositions = false) {
 
 export function createMatch(room) {
   const match = {
+    id: `${room.id || "room"}-${Date.now()}-${room.matchNumber || 1}`,
     tick: 0,
     snapshotSeq: 0,
     players: new Map(),
@@ -86,6 +87,19 @@ export function createMatch(room) {
     resetAt: 0,
   };
   rebuildPlayers(match, room.players);
+  const availableTeams = ["red", "blue"].filter((team) =>
+    [...match.players.values()].some((player) => player.team === team)
+  );
+  if (availableTeams.length) {
+    const random = typeof room.random === "function" ? room.random : Math.random;
+    const kickoffTeam = availableTeams[Math.floor(random() * availableTeams.length)];
+    const taker = [...match.players.values()].find((player) => player.team === kickoffTeam);
+    if (taker) {
+      taker.x = 0;
+      taker.z = 0;
+      match.kickoff = { locked: true, team: kickoffTeam, takerId: taker.id };
+    }
+  }
   resetKeepers(match, room.settings.keeperEnabled);
   return match;
 }
@@ -468,6 +482,7 @@ export function stepMatch(room, dt, now = Date.now()) {
 export function createSnapshot(room, now = Date.now()) {
   const match = room.match;
   return {
+    matchId: match.id,
     seq: ++match.snapshotSeq,
     tick: match.tick,
     serverTime: now,
