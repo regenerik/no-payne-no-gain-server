@@ -204,24 +204,44 @@ test("spectators keep their stand position when a goal resets the field", () => 
   assert.equal(after.lastProcessedInput, 9);
 });
 
-test("the new maximum shot matches the previous 85 percent trajectory", () => {
+test("shots clear the crossbar from 80 percent and peak half a goal above at maximum", () => {
   const room = makeRoom({ proMode: true });
   const red = room.match.players.get("red");
   red.x = 0;
   red.z = 0;
   room.match.ball.x = 1;
   room.match.ball.z = 0;
-  const result = kickBall(room, "red", {
-    power: 46.62,
-    chargeRatio: 1,
-    liftPower: 6.45,
+  const eightyResult = kickBall(room, "red", {
+    power: 42.85,
+    chargeRatio: 0.8,
+    liftPower: 7.8,
     dir: { x: 1, z: 0 },
   });
-  assert.equal(result.ok, true);
-  let peak = room.match.ball.y;
+  assert.equal(eightyResult.ok, true);
+  let eightyPeak = room.match.ball.y;
   for (let i = 0; i < 120; i += 1) {
     stepMatch(room, 1 / 120);
-    peak = Math.max(peak, room.match.ball.y);
+    eightyPeak = Math.max(eightyPeak, room.match.ball.y);
   }
-  assert.ok(peak >= 2.45 && peak <= 2.75);
+  assert.ok(eightyPeak > 3.08);
+
+  const maximumRoom = makeRoom({ proMode: true });
+  const maximumRed = maximumRoom.match.players.get("red");
+  maximumRed.x = 0;
+  maximumRed.z = 0;
+  maximumRoom.match.ball.x = 1;
+  maximumRoom.match.ball.z = 0;
+  const maximumResult = kickBall(maximumRoom, "red", {
+    power: 46.62,
+    chargeRatio: 1,
+    liftPower: 9.2,
+    dir: { x: 1, z: 0 },
+  });
+  assert.equal(maximumResult.ok, true);
+  let maximumPeak = maximumRoom.match.ball.y;
+  for (let i = 0; i < 150; i += 1) {
+    stepMatch(maximumRoom, 1 / 120);
+    maximumPeak = Math.max(maximumPeak, maximumRoom.match.ball.y);
+  }
+  assert.ok(maximumPeak >= 4.55 && maximumPeak <= 4.9);
 });
