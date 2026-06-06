@@ -203,22 +203,45 @@ test("spectators keep their stand position when a goal resets the field", () => 
   assert.equal(after.lastProcessedInput, 9);
 });
 
-test("a maximum overcharged shot can clear the crossbar", () => {
+test("shot lift peaks near the crossbar at 90 percent and one-and-a-half goals above it at maximum", () => {
   const room = makeRoom({ proMode: true });
   const red = room.match.players.get("red");
   red.x = 0;
-  red.z = 29.5;
-  room.match.ball.x = 0;
-  room.match.ball.z = 30.5;
-  const result = kickBall(room, "red", {
+  red.z = 0;
+  room.match.ball.x = 1;
+  room.match.ball.z = 0;
+  const ninetyResult = kickBall(room, "red", {
+    power: 47.73,
+    chargeRatio: 0.9,
+    liftPower: 6.7,
+    dir: { x: 1, z: 0 },
+  });
+  assert.equal(ninetyResult.ok, true);
+  let ninetyPeak = room.match.ball.y;
+  for (let i = 0; i < 120; i += 1) {
+    stepMatch(room, 1 / 120);
+    ninetyPeak = Math.max(ninetyPeak, room.match.ball.y);
+  }
+  assert.ok(ninetyPeak >= 2.65 && ninetyPeak <= 3.15);
+
+  const maximumRoom = makeRoom({ proMode: true });
+  const maximumRed = maximumRoom.match.players.get("red");
+  maximumRed.x = 0;
+  maximumRed.z = 0;
+  maximumRoom.match.ball.x = 1;
+  maximumRoom.match.ball.z = 0;
+  const maximumResult = kickBall(maximumRoom, "red", {
     power: 49.95,
     chargeRatio: 1,
-    liftPower: 28.5,
-    dir: { x: 0, z: 1 },
+    liftPower: 12,
+    dir: { x: 1, z: 0 },
   });
-  assert.equal(result.ok, true);
-  for (let i = 0; i < 30; i += 1) stepMatch(room, 1 / 60);
-  assert.equal(room.scores.red, 0);
-  assert.ok(room.match.ball.y > 3.08);
-  assert.ok(room.match.ball.vz < 0);
+  assert.equal(maximumResult.ok, true);
+  let maximumPeak = maximumRoom.match.ball.y;
+  for (let i = 0; i < 240; i += 1) {
+    stepMatch(maximumRoom, 1 / 120);
+    maximumPeak = Math.max(maximumPeak, maximumRoom.match.ball.y);
+  }
+  const expectedMaximum = 3.08 * 2.5;
+  assert.ok(maximumPeak >= expectedMaximum - 0.35 && maximumPeak <= expectedMaximum + 0.35);
 });

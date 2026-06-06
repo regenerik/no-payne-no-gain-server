@@ -103,8 +103,6 @@ try {
   });
   const viewerState = viewerSnapshot.players.find((player) => player.id === viewer.id);
   assert.ok(viewerState.y > viewerInitial.y);
-  viewer.disconnect();
-  viewer = null;
 
   let hostSnapshot;
   let guestSnapshot;
@@ -135,11 +133,20 @@ try {
   host.emit("player:team", { playerId: guest.id, team: "red" });
   await wait(120);
 
-  const restartedPromise = Promise.all([once(host, "room:started"), once(guest, "room:started")]);
+  const restartedPromise = Promise.all([
+    once(host, "room:started"),
+    once(guest, "room:started"),
+    once(viewer, "room:started"),
+  ]);
   host.emit("room:start", { timeLimit: 1, scoreLimit: 3, proMode: false, keeperEnabled: false });
-  const [secondHostRoom, secondGuestRoom] = await restartedPromise;
+  const [secondHostRoom, secondGuestRoom, secondViewerRoom] = await restartedPromise;
   const secondMatchId = secondHostRoom.matchState.matchId;
   assert.equal(secondMatchId, secondGuestRoom.matchState.matchId);
+  assert.equal(secondMatchId, secondViewerRoom.matchState.matchId);
+  assert.equal(
+    secondViewerRoom.matchState.players.find((player) => player.id === viewer.id)?.team,
+    "spectators"
+  );
   assert.notEqual(secondMatchId, firstMatchId);
   assert.equal(secondHostRoom.matchState.kickoffLocked, true);
   assert.ok(secondHostRoom.matchState.kickoffTakerId);
