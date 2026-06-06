@@ -180,3 +180,45 @@ test("spectators walk and jump on the stands without entering the field", () => 
   stepMatch(room, 1 / 60);
   assert.notEqual(room.match.ball.ownerId, "viewer");
 });
+
+test("spectators keep their stand position when a goal resets the field", () => {
+  const room = makeRoom({ proMode: true });
+  const spectator = addSpectator(room);
+  spectator.x = -(FIELD.width / 2 + 10.2);
+  spectator.y = 3.53;
+  spectator.z = 11.4;
+  spectator.angle = 1.37;
+  spectator.input = { seq: 9, angle: 1.37, vx: 0, vz: 0 };
+  spectator.lastProcessedInput = 9;
+  room.match.ball.x = 0;
+  room.match.ball.z = FIELD.length / 2 - 0.2;
+  room.match.ball.vz = 20;
+  stepMatch(room, 1 / 60, 1_000);
+  stepMatch(room, 1 / 60, 2_000);
+  const after = room.match.players.get("viewer");
+  assert.equal(after.x, spectator.x);
+  assert.equal(after.y, spectator.y);
+  assert.equal(after.z, spectator.z);
+  assert.equal(after.angle, spectator.angle);
+  assert.equal(after.lastProcessedInput, 9);
+});
+
+test("a maximum overcharged shot can clear the crossbar", () => {
+  const room = makeRoom({ proMode: true });
+  const red = room.match.players.get("red");
+  red.x = 0;
+  red.z = 29.5;
+  room.match.ball.x = 0;
+  room.match.ball.z = 30.5;
+  const result = kickBall(room, "red", {
+    power: 49.95,
+    chargeRatio: 1,
+    liftPower: 28.5,
+    dir: { x: 0, z: 1 },
+  });
+  assert.equal(result.ok, true);
+  for (let i = 0; i < 30; i += 1) stepMatch(room, 1 / 60);
+  assert.equal(room.scores.red, 0);
+  assert.ok(room.match.ball.y > 3.08);
+  assert.ok(room.match.ball.vz < 0);
+});

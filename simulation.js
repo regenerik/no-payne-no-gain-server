@@ -374,7 +374,28 @@ function resetForKickoff(room, scoringTeam) {
   const match = room.match;
   const kickoffTeam = scoringTeam === "red" ? "blue" : "red";
   const taker = [...match.players.values()].find((player) => player.team === kickoffTeam) || null;
+  const spectatorStates = new Map(
+    [...match.players.values()]
+      .filter((player) => player.spectator)
+      .map((player) => [player.id, {
+        x: player.x,
+        y: player.y,
+        z: player.z,
+        angle: player.angle,
+        input: { ...player.input },
+        verticalVelocity: player.verticalVelocity,
+        grounded: player.grounded,
+        jumpQueued: player.jumpQueued,
+        moving: player.moving,
+        lastProcessedInput: player.lastProcessedInput,
+      }])
+  );
   rebuildPlayers(match, room.players);
+  for (const [playerId, state] of spectatorStates) {
+    const spectator = match.players.get(playerId);
+    if (!spectator?.spectator) continue;
+    Object.assign(spectator, state);
+  }
   match.ball = {
     x: 0,
     y: BALL_RADIUS,
