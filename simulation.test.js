@@ -16,7 +16,7 @@ function makeRoom({ proMode = false, keeperEnabled = false, initialKickoff = fal
     random: () => 0,
     started: true,
     matchEndsAt: Date.now() + 60_000,
-    settings: { proMode, keeperEnabled, scoreLimit: 3, timeLimit: 1 },
+    settings: { proMode, keeperEnabled, scoreLimit: 3, timeLimit: 1, unlimited: false },
     scores: { red: 0, blue: 0 },
     players: new Map([
       ["red", { id: "red", name: "Red", team: "red" }],
@@ -244,4 +244,14 @@ test("shots clear the crossbar from 80 percent and peak half a goal above at max
     maximumPeak = Math.max(maximumPeak, maximumRoom.match.ball.y);
   }
   assert.ok(maximumPeak >= 4.55 && maximumPeak <= 4.9);
+});
+
+test("unlimited matches expose no ending timestamp", () => {
+  const room = makeRoom();
+  room.settings.unlimited = true;
+  room.matchEndsAt = null;
+
+  const snapshot = createSnapshot(room);
+
+  assert.equal(snapshot.matchEndsAt, null);
 });
