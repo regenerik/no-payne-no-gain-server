@@ -175,6 +175,47 @@ test("enabled keepers are included in authoritative snapshots", () => {
   assert.deepEqual(snapshot.keepers.map(({ side }) => side), [-1, 1]);
 });
 
+test("a keeper clears the ball when an attacker tries to dribble through", () => {
+  const room = makeRoom({ proMode: false, keeperEnabled: true });
+  room.match.kickoff = { locked: false, team: null, takerId: null };
+  const attacker = room.match.players.get("red");
+  const keeper = room.match.keepers.find((candidate) => candidate.side === 1);
+  attacker.x = 0.4;
+  attacker.z = keeper.z - 1.35;
+  attacker.input = { seq: 1, angle: 0, vx: 0, vz: 8 };
+  room.match.ball.ownerId = attacker.id;
+  room.match.ball.x = 0.4;
+  room.match.ball.z = keeper.z - 0.8;
+  room.match.ball.y = 0.42;
+
+  stepMatch(room, 1 / 60, Date.now());
+
+  assert.equal(room.match.ball.ownerId, null);
+  assert.equal(keeper.mode, "clear");
+  assert.ok(room.match.ball.vz < -15);
+  assert.ok(room.match.ball.magnetCooldown >= 1);
+});
+
+test("a keeper also clears a low dribble in pro mode", () => {
+  const room = makeRoom({ proMode: true, keeperEnabled: true });
+  room.match.kickoff = { locked: false, team: null, takerId: null };
+  const attacker = room.match.players.get("red");
+  const keeper = room.match.keepers.find((candidate) => candidate.side === 1);
+  attacker.x = -0.3;
+  attacker.z = keeper.z - 1.4;
+  room.match.ball.ownerId = null;
+  room.match.ball.x = -0.3;
+  room.match.ball.z = keeper.z - 0.75;
+  room.match.ball.y = 0.42;
+  room.match.ball.vx = 0;
+  room.match.ball.vz = 5;
+
+  stepMatch(room, 1 / 60, Date.now());
+
+  assert.equal(keeper.mode, "clear");
+  assert.ok(room.match.ball.vz < -15);
+});
+
 test("snapshots identify the match so stale packets can be discarded", () => {
   const room = makeRoom();
   const first = createSnapshot(room);

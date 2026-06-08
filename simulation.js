@@ -134,8 +134,8 @@ export function syncMatchPlayers(room, preservePositions = true) {
 function resetKeepers(match, enabled) {
   match.keepers = enabled
     ? [
-        { side: -1, x: 0, y: 0, z: -FIELD.length / 2 + 4.5, mode: "ready", targetX: 0, timer: 0 },
-        { side: 1, x: 0, y: 0, z: FIELD.length / 2 - 4.5, mode: "ready", targetX: 0, timer: 0 },
+        { side: -1, x: 0, y: 0, z: -FIELD.length / 2 + 4.5, mode: "ready", targetX: 0, timer: 0, clearanceCooldown: 0 },
+        { side: 1, x: 0, y: 0, z: FIELD.length / 2 - 4.5, mode: "ready", targetX: 0, timer: 0, clearanceCooldown: 0 },
       ]
     : [];
 }
@@ -343,6 +343,7 @@ function collideBallWithPlayers(match, proMode) {
 
 function updateKeepers(match, dt) {
   for (const keeper of match.keepers) {
+    keeper.clearanceCooldown = Math.max(0, (keeper.clearanceCooldown || 0) - dt);
     const baseZ = keeper.side * (FIELD.length / 2 - 4.5);
     if (keeper.mode === "dive") {
       keeper.timer -= dt;
@@ -354,6 +355,10 @@ function updateKeepers(match, dt) {
         keeper.mode = "recover";
         keeper.timer = 0.85;
       }
+    } else if (keeper.mode === "clear") {
+      keeper.timer -= dt;
+      keeper.y = Math.max(0, Math.sin((0.42 - keeper.timer) * Math.PI) * 0.12);
+      if (keeper.timer <= 0) keeper.mode = "recover";
     } else {
       if (keeper.mode === "recover") {
         keeper.timer -= dt;
@@ -365,6 +370,41 @@ function updateKeepers(match, dt) {
       keeper.y += (0 - keeper.y) * 0.18;
     }
   }
+}
+
+function keeperClearsDangerousBall(match, owner = null) {
+  if (match.ball.y > 0.9 || length2(match.ball.vx, match.ball.vz) > 13) return false;
+  for (const keeper of match.keepers) {
+    const defendingTeam = keeper.side < 0 ? "red" : "blue";
+    const attacker = owner && !owner.spectator && owner.team !== defendingTeam
+      ? owner
+      : [...match.players.values()].find((player) =>
+          !player.spectator
+          && player.team !== defendingTeam
+          && length2(player.x - keeper.x, player.z - keeper.z) <= 2.15
+        );
+    if (!attacker || keeper.clearanceCooldown > 0 || keeper.mode === "dive") continue;
+    const playerDistance = length2(attacker.x - keeper.x, attacker.z - keeper.z);
+    const ballDistance = length2(match.ball.x - keeper.x, match.ball.z - keeper.z);
+    if (playerDistance > 2.15 || ballDistance > 2.45) continue;
+
+    const lateral = clamp((match.ball.x - keeper.x) * 0.48, -0.72, 0.72);
+    const direction = normalize2(lateral, -keeper.side, 0, -keeper.side);
+    match.ball.ownerId = null;
+    match.ball.magnetCooldown = 1.05;
+    match.ball.x = keeper.x + direction.x * 1.5;
+    match.ball.z = keeper.z + direction.z * 1.5;
+    match.ball.y = BALL_RADIUS;
+    match.ball.vx = direction.x * 21;
+    match.ball.vz = direction.z * 21;
+    match.ball.vy = 1.3;
+    match.ball.charge = 0.18;
+    keeper.mode = "clear";
+    keeper.timer = 0.42;
+    keeper.clearanceCooldown = 1.15;
+    return true;
+  }
+  return false;
 }
 
 function collideBallWithKeepers(match) {
@@ -481,6 +521,7 @@ function updateBall(room, dt, now) {
     const owner = ball.ownerId ? match.players.get(ball.ownerId) : nearestBallOwner(match);
     if (owner) {
       ball.ownerId = owner.id;
+      if (keeperClearsDangerousBall(match, owner)) return null;
       updateControlledBall(match, owner, dt);
       if (ball.z >= FIELD.length / 2 - BALL_RADIUS && Math.abs(ball.x) < GOAL_HALF_WIDTH) {
         return scoreGoal(room, "red", now);
@@ -493,6 +534,7 @@ function updateBall(room, dt, now) {
     ball.ownerId = null;
   }
 
+  if (keeperClearsDangerousBall(match)) return null;
   collideBallWithPlayers(match, room.settings.proMode);
   ball.x += ball.vx * dt;
   ball.z += ball.vz * dt;
