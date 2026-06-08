@@ -5,6 +5,10 @@ export const SNAPSHOT_HZ = 30;
 const BALL_RADIUS = 0.42;
 const PLAYER_RADIUS = 0.82;
 const MAX_PLAYER_SPEED = 14.2;
+const NORMAL_PLAYER_SPEED = 10.5;
+const SPRINT_DRAIN_SECONDS = 5;
+const SPRINT_RECHARGE_SECONDS = 5;
+const SPRINT_EMPTY_DELAY_SECONDS = 2;
 const GOAL_HALF_WIDTH = 4.2;
 const GOAL_HEIGHT = 3.08;
 const KEEPER_ARC_DEPTH = 4.5;
@@ -58,12 +62,15 @@ function makePlayer(roomPlayer, index, total) {
       angle: spectator ? spectatorAngle : roomPlayer.team === "blue" ? Math.PI : 0,
       vx: 0,
       vz: 0,
+      sprinting: false,
     },
     lastProcessedInput: 0,
     spectator,
     verticalVelocity: 0,
     grounded: true,
     jumpQueued: false,
+    sprintEnergy: 1,
+    sprintRechargeDelay: 0,
   };
 }
 
@@ -167,6 +174,7 @@ export function setPlayerInput(room, playerId, input = {}) {
     angle: Number.isFinite(Number(input.angle)) ? Number(input.angle) : player.angle,
     vx,
     vz,
+    sprinting: input.sprinting === true,
   };
   if (player.spectator && input.jump === true) player.jumpQueued = true;
 }
@@ -213,7 +221,7 @@ function constrainKickoffPlayer(match, player) {
   if (player.team === "blue") player.z = Math.max(player.z, 0.35);
 }
 
-function updatePlayers(match, dt) {
+function updatePlayers(match, dt, settings = {}) {
   for (const player of match.players.values()) {
     player.angle = player.input.angle;
     if (player.spectator) {
@@ -240,6 +248,29 @@ function updatePlayers(match, dt) {
       player.moving = length2(player.input.vx, player.input.vz) > 0.2;
       player.lastProcessedInput = player.input.seq;
       continue;
+    }
+    if (settings.limitedSprint !== false) {
+      const requestedSpeed = length2(player.input.vx, player.input.vz);
+      const wantsSprint = player.input.sprinting && requestedSpeed > NORMAL_PLAYER_SPEED + 0.1;
+      const canSprint = wantsSprint && player.sprintEnergy > 0 && player.sprintRechargeDelay <= 0;
+      if (canSprint) {
+        player.sprintEnergy = Math.max(0, player.sprintEnergy - dt / SPRINT_DRAIN_SECONDS);
+        if (player.sprintEnergy <= 0) player.sprintRechargeDelay = SPRINT_EMPTY_DELAY_SECONDS;
+      } else {
+        if (player.sprintRechargeDelay > 0) {
+          player.sprintRechargeDelay = Math.max(0, player.sprintRechargeDelay - dt);
+        } else {
+          player.sprintEnergy = Math.min(1, player.sprintEnergy + dt / SPRINT_RECHARGE_SECONDS);
+        }
+        if (wantsSprint && !canSprint && requestedSpeed > NORMAL_PLAYER_SPEED) {
+          const scale = NORMAL_PLAYER_SPEED / requestedSpeed;
+          player.input.vx *= scale;
+          player.input.vz *= scale;
+        }
+      }
+    } else {
+      player.sprintEnergy = 1;
+      player.sprintRechargeDelay = 0;
     }
     const isTaker = match.kickoff.locked && player.id === match.kickoff.takerId;
     if (!isTaker) {
@@ -435,9 +466,10 @@ function collideBallWithKeepers(match) {
     const speed = Math.max(length2(match.ball.vx, match.ball.vz), 9);
     match.ball.x = keeper.x + normal.x * (radius + 0.62);
     match.ball.z = keeper.z + normal.z * (radius + 0.62);
-    match.ball.vx = normal.x * speed * 0.82;
-    match.ball.vz = normal.z * speed * 0.82 - keeper.side * (Math.abs(normal.z * speed * 0.82) + 2.5);
-    match.ball.vy = Math.max(match.ball.vy * 0.25, 1.2);
+    const reboundSpeed = Math.min(speed * 0.48, 18);
+    match.ball.vx = normal.x * reboundSpeed;
+    match.ball.vz = normal.z * reboundSpeed - keeper.side * 1.2;
+    match.ball.vy = Math.max(match.ball.vy * 0.18, 0.75);
     match.ball.ownerId = null;
     return true;
   }
@@ -654,7 +686,7 @@ export function stepMatch(room, dt, now = Date.now()) {
   if (!room.started || !room.match) return [];
   room.match.tick += 1;
   room.match.goalCooldown = Math.max(0, room.match.goalCooldown - dt);
-  updatePlayers(room.match, dt);
+  updatePlayers(room.match, dt, room.settings);
   updateKeepers(room.match, dt);
   const event = updateBall(room, dt, now);
   return event ? [event] : [];
@@ -683,6 +715,8 @@ export function createSnapshot(room, now = Date.now()) {
       vx: player.input.vx,
       vz: player.input.vz,
       ack: player.lastProcessedInput,
+      sprintEnergy: player.sprintEnergy,
+      sprintRechargeDelay: player.sprintRechargeDelay,
     })),
     ball: {
       x: match.ball.x,

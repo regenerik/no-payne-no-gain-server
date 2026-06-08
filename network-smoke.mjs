@@ -48,6 +48,7 @@ try {
     playerName: "Host",
   });
   assert.equal(created.ok, true);
+  assert.equal(created.room.settings.limitedSprint, true);
   const joined = await emitAck(guest, "room:join", {
     roomId: created.room.id,
     playerName: "Guest",
@@ -58,8 +59,15 @@ try {
   host.emit("player:team", { playerId: guest.id, team: "blue" });
   await wait(100);
   const startedPromise = Promise.all([once(host, "room:started"), once(guest, "room:started")]);
-  host.emit("room:start", { timeLimit: 1, scoreLimit: 3, proMode: false, keeperEnabled: false });
+  host.emit("room:start", {
+    timeLimit: 1,
+    scoreLimit: 3,
+    proMode: false,
+    keeperEnabled: false,
+    limitedSprint: true,
+  });
   const [firstHostRoom, firstGuestRoom] = await startedPromise;
+  assert.equal(firstHostRoom.settings.limitedSprint, true);
   assert.equal(firstHostRoom.matchState.matchId, firstGuestRoom.matchState.matchId);
   const firstMatchId = firstHostRoom.matchState.matchId;
   const firstTakerSocket = socketById(firstHostRoom.matchState.kickoffTakerId, host, guest);

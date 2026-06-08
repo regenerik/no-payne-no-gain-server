@@ -7,6 +7,7 @@ import {
   kickBall,
   setPlayerInput,
   stepMatch,
+  syncMatchPlayers,
 } from "./simulation.js";
 
 function makeRoom({ proMode = false, keeperEnabled = false, initialKickoff = false } = {}) {
@@ -16,7 +17,7 @@ function makeRoom({ proMode = false, keeperEnabled = false, initialKickoff = fal
     random: () => 0,
     started: true,
     matchEndsAt: Date.now() + 60_000,
-    settings: { proMode, keeperEnabled, scoreLimit: 3, timeLimit: 1, unlimited: false },
+    settings: { proMode, keeperEnabled, limitedSprint: true, scoreLimit: 3, timeLimit: 1, unlimited: false },
     scores: { red: 0, blue: 0 },
     players: new Map([
       ["red", { id: "red", name: "Red", team: "red" }],
@@ -43,6 +44,53 @@ test("the server advances players from inputs and acknowledges the sequence", ()
   const player = room.match.players.get("red");
   assert.ok(player.z > before + 9);
   assert.equal(createSnapshot(room).players.find(({ id }) => id === "red").ack, 7);
+});
+
+test("limited sprint drains for five seconds, waits two seconds and then recharges", () => {
+  const room = makeRoom();
+  room.match.kickoff = { locked: false, team: null, takerId: null };
+  const player = room.match.players.get("red");
+  setPlayerInput(room, "red", {
+    seq: 1,
+    angle: 0,
+    vx: 0,
+    vz: 14.2,
+    sprinting: true,
+  });
+
+  let drainFrames = 0;
+  while (player.sprintEnergy > 0 && drainFrames < 310) {
+    stepMatch(room, 1 / 60);
+    drainFrames += 1;
+  }
+  assert.ok(drainFrames >= 299 && drainFrames <= 301);
+  assert.ok(player.sprintEnergy < 0.01);
+  assert.ok(player.sprintRechargeDelay > 1.98);
+
+  setPlayerInput(room, "red", { seq: 2, angle: 0, vx: 0, vz: 0, sprinting: false });
+  for (let i = 0; i < 120; i += 1) stepMatch(room, 1 / 60);
+  assert.ok(player.sprintRechargeDelay < 0.02);
+  assert.ok(player.sprintEnergy < 0.02);
+
+  for (let i = 0; i < 300; i += 1) stepMatch(room, 1 / 60);
+  assert.ok(player.sprintEnergy > 0.99);
+});
+
+test("unlimited sprint preserves the previous movement behavior", () => {
+  const room = makeRoom();
+  room.settings.limitedSprint = false;
+  room.match.kickoff = { locked: false, team: null, takerId: null };
+  const player = room.match.players.get("red");
+  setPlayerInput(room, "red", {
+    seq: 1,
+    angle: 0,
+    vx: 0,
+    vz: 14.2,
+    sprinting: true,
+  });
+  for (let i = 0; i < 360; i += 1) stepMatch(room, 1 / 60);
+  assert.equal(player.sprintEnergy, 1);
+  assert.equal(player.sprintRechargeDelay, 0);
 });
 
 test("a kick is validated and simulated by the server", () => {
@@ -175,6 +223,19 @@ test("enabled keepers are included in authoritative snapshots", () => {
   assert.deepEqual(snapshot.keepers.map(({ side }) => side), [-1, 1]);
 });
 
+test("moving a player to spectators during a match places them directly in the stands", () => {
+  const room = makeRoom();
+  const redRoomPlayer = room.players.get("red");
+  redRoomPlayer.team = "spectators";
+  syncMatchPlayers(room, false);
+
+  const spectator = room.match.players.get("red");
+  assert.equal(spectator.team, "spectators");
+  assert.equal(spectator.spectator, true);
+  assert.ok(Math.abs(spectator.x) > FIELD.width / 2 + 5);
+  assert.ok(spectator.y > 1);
+});
+
 test("keepers follow a defensive arc to close attacks from the end line", () => {
   const room = makeRoom({ proMode: true, keeperEnabled: true });
   room.match.kickoff = { locked: false, team: null, takerId: null };
@@ -243,6 +304,22 @@ test("a keeper also clears a low dribble in pro mode", () => {
 
   assert.equal(keeper.mode, "clear");
   assert.ok(room.match.ball.vz < -15);
+});
+
+test("keeper saves return strong shots without launching them across the whole field", () => {
+  const room = makeRoom({ proMode: true, keeperEnabled: true });
+  room.match.kickoff = { locked: false, team: null, takerId: null };
+  const keeper = room.match.keepers.find((candidate) => candidate.side === 1);
+  room.match.ball.x = keeper.x;
+  room.match.ball.z = keeper.z - 1.25;
+  room.match.ball.y = 0.7;
+  room.match.ball.vx = 0;
+  room.match.ball.vz = 30;
+
+  stepMatch(room, 1 / 60, Date.now());
+
+  assert.ok(room.match.ball.vz < 0);
+  assert.ok(Math.hypot(room.match.ball.vx, room.match.ball.vz) < 20);
 });
 
 test("snapshots identify the match so stale packets can be discarded", () => {
