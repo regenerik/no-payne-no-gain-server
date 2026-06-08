@@ -46,7 +46,7 @@ test("the server advances players from inputs and acknowledges the sequence", ()
   assert.equal(createSnapshot(room).players.find(({ id }) => id === "red").ack, 7);
 });
 
-test("limited sprint drains for five seconds, waits two seconds and then recharges", () => {
+test("limited sprint drains for three seconds, waits two seconds and then recharges", () => {
   const room = makeRoom();
   room.match.kickoff = { locked: false, team: null, takerId: null };
   const player = room.match.players.get("red");
@@ -59,11 +59,11 @@ test("limited sprint drains for five seconds, waits two seconds and then recharg
   });
 
   let drainFrames = 0;
-  while (player.sprintEnergy > 0 && drainFrames < 310) {
+  while (player.sprintEnergy > 0 && drainFrames < 190) {
     stepMatch(room, 1 / 60);
     drainFrames += 1;
   }
-  assert.ok(drainFrames >= 299 && drainFrames <= 301);
+  assert.ok(drainFrames >= 179 && drainFrames <= 181);
   assert.ok(player.sprintEnergy < 0.01);
   assert.ok(player.sprintRechargeDelay > 1.98);
 

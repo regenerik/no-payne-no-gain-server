@@ -183,8 +183,12 @@ function leaveCurrentRoom(socket) {
   emitRoom(room);
 }
 
-function closeRoom(room, reason = "host-left") {
-  io.to(room.id).emit("room:closed", { reason });
+function closeRoom(room, reason = "host-left", excludedPlayerId = null) {
+  for (const [playerId, player] of room.players) {
+    if (playerId === excludedPlayerId) continue;
+    const playerSocket = player.socketId ? io.sockets.sockets.get(player.socketId) : null;
+    playerSocket?.emit("room:closed", { reason });
+  }
   for (const playerId of room.players.keys()) {
     clearDisconnectTimer(room.id, playerId);
     const playerSocketId = room.players.get(playerId)?.socketId;
@@ -302,7 +306,7 @@ io.on("connection", (socket) => {
   socket.on("room:leave", () => {
     const room = getSocketRoom(socket);
     if (room && getSocketPlayerId(socket) === room.hostId) {
-      closeRoom(room);
+      closeRoom(room, "host-left", room.hostId);
       return;
     }
     leaveCurrentRoom(socket);

@@ -192,6 +192,17 @@ try {
   assert.ok(afterHost.x > beforeHost.x + 1);
   assert.ok(afterGuest.x > beforeGuest.x + 1);
 
+  let hostReceivedOwnClosure = false;
+  host.once("room:closed", () => {
+    hostReceivedOwnClosure = true;
+  });
+  const guestClosure = once(guest, "room:closed");
+  host.emit("room:leave");
+  const closurePayload = await guestClosure;
+  await wait(80);
+  assert.equal(closurePayload.reason, "host-left");
+  assert.equal(hostReceivedOwnClosure, false);
+
   console.log("Network smoke test passed: consecutive starts use isolated match state and players move.");
 } finally {
   host.disconnect();
