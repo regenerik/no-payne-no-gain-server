@@ -120,6 +120,34 @@ test("all players stay in their own half until kickoff", () => {
   assert.ok(blue.z >= 0.35);
 });
 
+test("opponents cannot move the kickoff ball or push the taker", () => {
+  const room = makeRoom({ proMode: true });
+  room.match.kickoff = { locked: true, team: "red", takerId: "red" };
+  const taker = room.match.players.get("red");
+  const opponent = room.match.players.get("blue");
+  taker.x = 0;
+  taker.z = 0;
+  opponent.x = 0.15;
+  opponent.z = 0.1;
+  opponent.input = { seq: 1, angle: Math.PI, vx: 0, vz: -14 };
+  room.match.ball.x = 0.4;
+  room.match.ball.z = 0.35;
+  room.match.ball.vx = 18;
+  room.match.ball.vz = -12;
+
+  stepMatch(room, 1 / 60, Date.now());
+
+  assert.equal(taker.x, 0);
+  assert.equal(taker.z, 0);
+  assert.equal(room.match.ball.x, 0);
+  assert.equal(room.match.ball.z, 0);
+  assert.equal(room.match.ball.vx, 0);
+  assert.equal(room.match.ball.vz, 0);
+  assert.ok(Math.hypot(opponent.x, opponent.z) >= 1.3);
+  assert.equal(kickBall(room, "blue", { power: 52, dir: { x: 0, z: -1 } }).ok, false);
+  assert.equal(room.match.kickoff.locked, true);
+});
+
 test("the ball rebounds from field boundaries", () => {
   const room = makeRoom({ proMode: true });
   room.match.ball.x = 20.57;

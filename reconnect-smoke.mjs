@@ -22,6 +22,7 @@ const hostId = `resume-host-${Date.now()}`;
 const guestId = `resume-guest-${Date.now()}`;
 const host = await connect(hostId);
 let guest = await connect(guestId);
+let roomClosedByHost = false;
 
 try {
   const created = await emitAck(host, "room:create", {
@@ -51,6 +52,36 @@ try {
   const matchId = started.matchState.matchId;
   assert.equal(started.players.find((player) => player.id === guestId)?.team, "blue");
 
+  const movedBeforeDisconnect = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Player did not move before disconnect")), 3000);
+    guest.on("match:snapshot", (snapshot) => {
+      const player = snapshot.players.find((candidate) => candidate.id === guestId);
+      if (player?.ack >= 9) {
+        clearTimeout(timer);
+        resolve(player);
+      }
+    });
+  });
+  for (let seq = 1; seq <= 8; seq += 1) {
+    guest.emit("player:input", {
+      matchId,
+      seq,
+      angle: Math.PI / 2,
+      vx: 7,
+      vz: 0,
+      jump: false,
+    });
+    await wait(40);
+  }
+  guest.emit("player:input", {
+    matchId,
+    seq: 9,
+    angle: Math.PI / 2,
+    vx: 0,
+    vz: 0,
+    jump: false,
+  });
+  const positionBeforeDisconnect = await movedBeforeDisconnect;
   guest.disconnect();
   await wait(2200);
   guest = await connect(guestId);
@@ -61,12 +92,15 @@ try {
   assert.equal(resumed.room.matchState.matchId, matchId);
   assert.equal(resumed.room.players.find((player) => player.id === guestId)?.team, "blue");
   assert.equal(resumed.room.players.length, 2);
+  const positionAfterResume = resumed.room.matchState.players.find((player) => player.id === guestId);
+  assert.equal(positionAfterResume.x, positionBeforeDisconnect.x);
+  assert.equal(positionAfterResume.z, positionBeforeDisconnect.z);
 
   const inputPromise = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Resumed input was not acknowledged")), 3000);
     guest.on("match:snapshot", (snapshot) => {
       const player = snapshot.players.find((candidate) => candidate.id === guestId);
-      if (player?.ack >= 1) {
+      if (player?.ack >= 10) {
         clearTimeout(timer);
         resolve(player);
       }
@@ -74,7 +108,7 @@ try {
   });
   guest.emit("player:input", {
     matchId,
-    seq: 1,
+    seq: 10,
     angle: 0,
     vx: 0,
     vz: 8,
@@ -83,9 +117,21 @@ try {
   const resumedPlayer = await inputPromise;
   assert.equal(resumedPlayer.vz, 8);
 
+  const roomClosedPromise = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Guest was not notified when host left")), 3000);
+    guest.once("room:closed", (payload) => {
+      clearTimeout(timer);
+      resolve(payload);
+    });
+  });
+  host.emit("room:leave");
+  const closedPayload = await roomClosedPromise;
+  roomClosedByHost = true;
+  assert.equal(closedPayload.reason, "host-left");
+
   console.log("Reconnect smoke test passed: player identity, team and match survive a mobile-style pause.");
 } finally {
-  host.emit("room:leave");
+  if (!roomClosedByHost) host.emit("room:leave");
   host.disconnect();
   guest.disconnect();
 }

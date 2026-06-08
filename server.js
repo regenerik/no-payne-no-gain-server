@@ -129,11 +129,11 @@ function createRoom({ name, maxPlayers, host }) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     settings: {
-      timeLimit: 3,
+      timeLimit: 5,
       unlimited: false,
-      scoreLimit: 3,
+      scoreLimit: 9,
       proMode: false,
-      keeperEnabled: false,
+      keeperEnabled: true,
     },
     scores: {
       red: 0,
@@ -293,7 +293,7 @@ io.on("connection", (socket) => {
     socket.data.roomId = room.id;
     socket.join(room.id);
     room.updatedAt = Date.now();
-    if (room.match) syncMatchPlayers(room, false);
+    if (room.match) syncMatchPlayers(room, true);
     ack?.({ ok: true, room: publicRoom(room) });
     emitRoom(room);
   });
@@ -448,6 +448,11 @@ io.on("connection", (socket) => {
     if (!room || !player || player.socketId !== socket.id) return;
     player.connected = false;
     player.socketId = null;
+    const matchPlayer = room.match?.players.get(playerId);
+    if (matchPlayer?.input) {
+      matchPlayer.input.vx = 0;
+      matchPlayer.input.vz = 0;
+    }
     socket.data.roomId = null;
     const key = reconnectKey(room.id, playerId);
     clearDisconnectTimer(room.id, playerId);

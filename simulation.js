@@ -259,13 +259,24 @@ function updatePlayers(match, dt) {
       const dz = b.z - a.z;
       const distance = length2(dx, dz);
       if (distance <= 0.001 || distance >= 1.35) continue;
-      const overlap = (1.35 - distance) * 0.5;
       const nx = dx / distance;
       const nz = dz / distance;
-      a.x -= nx * overlap;
-      a.z -= nz * overlap;
-      b.x += nx * overlap;
-      b.z += nz * overlap;
+      const totalOverlap = 1.35 - distance;
+      const aIsTaker = match.kickoff.locked && a.id === match.kickoff.takerId;
+      const bIsTaker = match.kickoff.locked && b.id === match.kickoff.takerId;
+      if (aIsTaker && !bIsTaker) {
+        b.x += nx * totalOverlap;
+        b.z += nz * totalOverlap;
+      } else if (bIsTaker && !aIsTaker) {
+        a.x -= nx * totalOverlap;
+        a.z -= nz * totalOverlap;
+      } else {
+        const overlap = totalOverlap * 0.5;
+        a.x -= nx * overlap;
+        a.z -= nz * overlap;
+        b.x += nx * overlap;
+        b.z += nz * overlap;
+      }
       constrainKickoffPlayer(match, a);
       constrainKickoffPlayer(match, b);
     }
@@ -311,7 +322,7 @@ function updateControlledBall(match, owner, dt) {
 }
 
 function collideBallWithPlayers(match, proMode) {
-  if (match.ball.ownerId) return;
+  if (match.ball.ownerId || match.kickoff.locked) return;
   for (const player of match.players.values()) {
     if (player.spectator) continue;
     if (match.ball.y > 1.1) continue;
@@ -451,6 +462,18 @@ function updateBall(room, dt, now) {
       match.pendingScoringTeam = null;
       resetForKickoff(room, scoringTeam);
     }
+    return null;
+  }
+
+  if (match.kickoff.locked) {
+    ball.x = 0;
+    ball.y = BALL_RADIUS;
+    ball.z = 0;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.vz = 0;
+    ball.charge = 0;
+    ball.ownerId = null;
     return null;
   }
 
