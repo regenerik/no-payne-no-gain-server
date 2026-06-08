@@ -175,6 +175,35 @@ test("enabled keepers are included in authoritative snapshots", () => {
   assert.deepEqual(snapshot.keepers.map(({ side }) => side), [-1, 1]);
 });
 
+test("keepers follow a defensive arc to close attacks from the end line", () => {
+  const room = makeRoom({ proMode: true, keeperEnabled: true });
+  room.match.kickoff = { locked: false, team: null, takerId: null };
+  const blueKeeper = room.match.keepers.find((candidate) => candidate.side === 1);
+  const redKeeper = room.match.keepers.find((candidate) => candidate.side === -1);
+  room.match.ball.x = 19;
+  room.match.ball.z = FIELD.length / 2 - 1.2;
+  room.match.ball.y = 0.42;
+
+  for (let i = 0; i < 90; i += 1) stepMatch(room, 1 / 60, Date.now());
+
+  assert.ok(blueKeeper.x > 5.7);
+  assert.ok(blueKeeper.z > FIELD.length / 2 - 1.5);
+
+  room.match.ball.x = 0;
+  room.match.ball.z = 0;
+  for (let i = 0; i < 90; i += 1) stepMatch(room, 1 / 60, Date.now());
+
+  assert.ok(Math.abs(blueKeeper.x) < 0.2);
+  assert.ok(Math.abs(blueKeeper.z - (FIELD.length / 2 - 4.5)) < 0.2);
+
+  room.match.ball.x = -19;
+  room.match.ball.z = -FIELD.length / 2 + 1.2;
+  for (let i = 0; i < 90; i += 1) stepMatch(room, 1 / 60, Date.now());
+
+  assert.ok(redKeeper.x < -5.7);
+  assert.ok(redKeeper.z < -FIELD.length / 2 + 1.5);
+});
+
 test("a keeper clears the ball when an attacker tries to dribble through", () => {
   const room = makeRoom({ proMode: false, keeperEnabled: true });
   room.match.kickoff = { locked: false, team: null, takerId: null };

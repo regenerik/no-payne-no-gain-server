@@ -7,6 +7,9 @@ const PLAYER_RADIUS = 0.82;
 const MAX_PLAYER_SPEED = 14.2;
 const GOAL_HALF_WIDTH = 4.2;
 const GOAL_HEIGHT = 3.08;
+const KEEPER_ARC_DEPTH = 4.5;
+const KEEPER_ARC_WIDTH = 6.25;
+const KEEPER_MAX_ARC_ANGLE = Math.PI * 0.47;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const length2 = (x, z) => Math.hypot(x, z);
@@ -341,10 +344,23 @@ function collideBallWithPlayers(match, proMode) {
   }
 }
 
+function getKeeperArcTarget(keeper, ball) {
+  const goalZ = keeper.side * FIELD.length / 2;
+  const inwardDistance = Math.max(0.05, keeper.side * (goalZ - ball.z));
+  const angle = clamp(
+    Math.atan2(ball.x, inwardDistance),
+    -KEEPER_MAX_ARC_ANGLE,
+    KEEPER_MAX_ARC_ANGLE
+  );
+  return {
+    x: Math.sin(angle) * KEEPER_ARC_WIDTH,
+    z: goalZ - keeper.side * Math.cos(angle) * KEEPER_ARC_DEPTH,
+  };
+}
+
 function updateKeepers(match, dt) {
   for (const keeper of match.keepers) {
     keeper.clearanceCooldown = Math.max(0, (keeper.clearanceCooldown || 0) - dt);
-    const baseZ = keeper.side * (FIELD.length / 2 - 4.5);
     if (keeper.mode === "dive") {
       keeper.timer -= dt;
       const blend = 1 - Math.pow(0.006, dt);
@@ -364,9 +380,10 @@ function updateKeepers(match, dt) {
         keeper.timer -= dt;
         if (keeper.timer <= 0) keeper.mode = "ready";
       }
-      const trackX = clamp(match.ball.x, -4.8, 4.8);
-      keeper.x += (trackX - keeper.x) * (1 - Math.pow(0.02, dt));
-      keeper.z += (baseZ - keeper.z) * 0.08;
+      const target = getKeeperArcTarget(keeper, match.ball);
+      const trackBlend = 1 - Math.pow(0.02, dt);
+      keeper.x += (target.x - keeper.x) * trackBlend;
+      keeper.z += (target.z - keeper.z) * trackBlend;
       keeper.y += (0 - keeper.y) * 0.18;
     }
   }
