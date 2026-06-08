@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test",
-    "test:network": "node network-smoke.mjs"
+    "test:network": "node network-smoke.mjs",
+    "test:reconnect": "node reconnect-smoke.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",

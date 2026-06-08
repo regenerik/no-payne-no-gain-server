@@ -16,6 +16,7 @@ import {
 const PORT = process.env.PORT || 3001;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "*";
 const ROOM_TTL_MS = 1000 * 60 * 60 * 3;
+const RECONNECT_GRACE_MS = 45_000;
 
 const app = express();
 const server = http.createServer(app);
@@ -27,6 +28,28 @@ const io = new Server(server, {
 });
 
 const rooms = new Map();
+const disconnectTimers = new Map();
+
+function normalizePlayerId(value, fallback) {
+  return String(value || fallback)
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 72) || fallback;
+}
+
+function getSocketPlayerId(socket) {
+  return socket.data.playerId || socket.id;
+}
+
+function reconnectKey(roomId, playerId) {
+  return `${roomId}:${playerId}`;
+}
+
+function clearDisconnectTimer(roomId, playerId) {
+  const key = reconnectKey(roomId, playerId);
+  const timer = disconnectTimers.get(key);
+  if (timer) clearTimeout(timer);
+  disconnectTimers.delete(key);
+}
 
 function publicPlayer(player) {
   return {
@@ -138,7 +161,9 @@ function getSocketRoom(socket) {
 function leaveCurrentRoom(socket) {
   const room = getSocketRoom(socket);
   if (!room) return;
-  room.players.delete(socket.id);
+  const playerId = getSocketPlayerId(socket);
+  clearDisconnectTimer(room.id, playerId);
+  room.players.delete(playerId);
   if (room.match) syncMatchPlayers(room);
   socket.leave(room.id);
   socket.data.roomId = null;
@@ -149,7 +174,7 @@ function leaveCurrentRoom(socket) {
     return;
   }
 
-  if (room.hostId === socket.id) {
+  if (room.hostId === playerId) {
     closeRoom(room, "host-disconnected");
     return;
   }
@@ -160,7 +185,9 @@ function leaveCurrentRoom(socket) {
 function closeRoom(room, reason = "host-left") {
   io.to(room.id).emit("room:closed", { reason });
   for (const playerId of room.players.keys()) {
-    const playerSocket = io.sockets.sockets.get(playerId);
+    clearDisconnectTimer(room.id, playerId);
+    const playerSocketId = room.players.get(playerId)?.socketId;
+    const playerSocket = playerSocketId ? io.sockets.sockets.get(playerSocketId) : null;
     if (playerSocket) {
       playerSocket.leave(room.id);
       playerSocket.data.roomId = null;
@@ -189,6 +216,7 @@ app.get("/", (_req, res) => {
 });
 
 io.on("connection", (socket) => {
+  socket.data.playerId = normalizePlayerId(socket.handshake.auth?.playerId, socket.id);
   socket.emit("rooms:update", roomList());
 
   socket.on("rooms:list", (ack) => {
@@ -197,12 +225,15 @@ io.on("connection", (socket) => {
 
   socket.on("room:create", (payload = {}, ack) => {
     leaveCurrentRoom(socket);
+    const playerId = getSocketPlayerId(socket);
     const host = {
-      id: socket.id,
+      id: playerId,
       name: String(payload.playerName || "davo").trim().slice(0, 18) || "davo",
       team: "spectators",
       score: 0,
       state: null,
+      socketId: socket.id,
+      connected: true,
     };
     const room = createRoom({
       name: payload.name,
@@ -226,12 +257,15 @@ io.on("connection", (socket) => {
       return;
     }
     leaveCurrentRoom(socket);
-    room.players.set(socket.id, {
-      id: socket.id,
+    const playerId = getSocketPlayerId(socket);
+    room.players.set(playerId, {
+      id: playerId,
       name: String(payload.playerName || "player").trim().slice(0, 18) || "player",
       team: "spectators",
       score: 0,
       state: null,
+      socketId: socket.id,
+      connected: true,
     });
     if (room.match) syncMatchPlayers(room);
     room.updatedAt = Date.now();
@@ -241,9 +275,32 @@ io.on("connection", (socket) => {
     emitRoom(room);
   });
 
+  socket.on("room:resume", ({ roomId } = {}, ack) => {
+    const room = rooms.get(String(roomId || ""));
+    const playerId = getSocketPlayerId(socket);
+    const player = room?.players.get(playerId);
+    if (!room || !player) {
+      ack?.({ ok: false, error: "Session expired" });
+      return;
+    }
+    clearDisconnectTimer(room.id, playerId);
+    const previousSocketId = player.socketId;
+    player.socketId = socket.id;
+    player.connected = true;
+    if (previousSocketId && previousSocketId !== socket.id) {
+      io.sockets.sockets.get(previousSocketId)?.disconnect(true);
+    }
+    socket.data.roomId = room.id;
+    socket.join(room.id);
+    room.updatedAt = Date.now();
+    if (room.match) syncMatchPlayers(room, false);
+    ack?.({ ok: true, room: publicRoom(room) });
+    emitRoom(room);
+  });
+
   socket.on("room:leave", () => {
     const room = getSocketRoom(socket);
-    if (room && socket.id === room.hostId) {
+    if (room && getSocketPlayerId(socket) === room.hostId) {
       closeRoom(room);
       return;
     }
@@ -252,7 +309,7 @@ io.on("connection", (socket) => {
 
   socket.on("player:team", ({ playerId, team } = {}) => {
     const room = getSocketRoom(socket);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room || getSocketPlayerId(socket) !== room.hostId) return;
     if (!["red", "blue", "spectators"].includes(team)) return;
     const player = room.players.get(playerId);
     if (!player) return;
@@ -265,7 +322,7 @@ io.on("connection", (socket) => {
 
   socket.on("room:autoTeams", () => {
     const room = getSocketRoom(socket);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room || getSocketPlayerId(socket) !== room.hostId) return;
     [...room.players.values()].forEach((player, index) => {
       player.team = index % 2 === 0 ? "red" : "blue";
       player.state = null;
@@ -277,7 +334,7 @@ io.on("connection", (socket) => {
 
   socket.on("room:resetTeams", () => {
     const room = getSocketRoom(socket);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room || getSocketPlayerId(socket) !== room.hostId) return;
     [...room.players.values()].forEach((player) => {
       player.team = "spectators";
       player.state = null;
@@ -289,7 +346,7 @@ io.on("connection", (socket) => {
 
   socket.on("room:settings", (settings = {}) => {
     const room = getSocketRoom(socket);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room || getSocketPlayerId(socket) !== room.hostId) return;
     room.settings = {
       timeLimit: Math.max(1, Math.min(Number(settings.timeLimit) || room.settings.timeLimit, 15)),
       unlimited: Boolean(settings.unlimited),
@@ -304,14 +361,14 @@ io.on("connection", (socket) => {
 
   socket.on("room:lock", (locked) => {
     const room = getSocketRoom(socket);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room || getSocketPlayerId(socket) !== room.hostId) return;
     room.locked = Boolean(locked);
     emitRoom(room);
   });
 
   socket.on("room:start", (settings = {}) => {
     const room = getSocketRoom(socket);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room || getSocketPlayerId(socket) !== room.hostId) return;
     if (settings && typeof settings === "object") {
       room.settings = {
         timeLimit: Math.max(1, Math.min(Number(settings.timeLimit) || room.settings.timeLimit, 15)),
@@ -340,15 +397,16 @@ io.on("connection", (socket) => {
     const room = getSocketRoom(socket);
     if (!room || !room.started || !room.match) return;
     if (kick.matchId !== room.match.id) return;
-    const kickId = String(kick.kickId || `${socket.id}-${++room.kickSeq}`);
-    const result = kickBall(room, socket.id, { ...kick, kickId });
+    const playerId = getSocketPlayerId(socket);
+    const kickId = String(kick.kickId || `${playerId}-${++room.kickSeq}`);
+    const result = kickBall(room, playerId, { ...kick, kickId });
     if (!result.ok) {
       socket.emit("ball:kick-rejected", { kickId });
       return;
     }
     room.lastKickId = result.kickId;
     io.to(room.id).emit("ball:kicked", {
-      playerId: socket.id,
+      playerId,
       kickId: result.kickId,
       power: Number(kick.power) || 0,
       chargeRatio: Number(kick.chargeRatio) || 0,
@@ -364,25 +422,49 @@ io.on("connection", (socket) => {
 
   socket.on("player:input", (input = {}) => {
     const room = getSocketRoom(socket);
-    const player = room?.players.get(socket.id);
+    const playerId = getSocketPlayerId(socket);
+    const player = room?.players.get(playerId);
     if (!room || !player || !room.started || !room.match) return;
     if (input.matchId !== room.match.id) return;
-    setPlayerInput(room, socket.id, input);
+    setPlayerInput(room, playerId, input);
   });
 
   socket.on("spectator:confetti", ({ matchId } = {}) => {
     const room = getSocketRoom(socket);
-    const player = room?.players.get(socket.id);
+    const playerId = getSocketPlayerId(socket);
+    const player = room?.players.get(playerId);
     if (!room?.started || !room.match || matchId !== room.match.id) return;
     if (!player || player.team !== "spectators") return;
     io.to(room.id).emit("spectator:confetti", {
-      playerId: socket.id,
+      playerId,
       matchId: room.match.id,
     });
   });
 
   socket.on("disconnect", () => {
-    leaveCurrentRoom(socket);
+    const room = getSocketRoom(socket);
+    const playerId = getSocketPlayerId(socket);
+    const player = room?.players.get(playerId);
+    if (!room || !player || player.socketId !== socket.id) return;
+    player.connected = false;
+    player.socketId = null;
+    socket.data.roomId = null;
+    const key = reconnectKey(room.id, playerId);
+    clearDisconnectTimer(room.id, playerId);
+    disconnectTimers.set(key, setTimeout(() => {
+      disconnectTimers.delete(key);
+      const currentRoom = rooms.get(room.id);
+      const currentPlayer = currentRoom?.players.get(playerId);
+      if (!currentRoom || currentPlayer?.connected) return;
+      currentRoom.players.delete(playerId);
+      if (currentRoom.match) syncMatchPlayers(currentRoom);
+      if (currentRoom.hostId === playerId || currentRoom.players.size === 0) {
+        closeRoom(currentRoom, "reconnect-timeout");
+        return;
+      }
+      currentRoom.updatedAt = Date.now();
+      emitRoom(currentRoom);
+    }, RECONNECT_GRACE_MS));
   });
 });
 
